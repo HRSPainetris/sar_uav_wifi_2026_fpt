@@ -113,18 +113,40 @@ def doppler_spectrogram(timestamps, values, fs=100., window=128, max_gap=0.1):
     return f, times + t[0], 20 * np.log10(np.maximum(np.abs(z), 1e-10))
 
 
-def simulate(host, port, rate, seconds):
+def synthetic_frames(count, rate, noise=8., impulse_prob=0.03, seed=None):
+    """Illustrative correlated fading, not a calibrated human/RF channel model."""
+    if rate <= 0 or noise < 0 or not 0 <= impulse_prob <= 1:
+        raise ValueError('rate > 0, noise >= 0, impulse probability in [0, 1] required')
+    rng = np.random.default_rng(seed)
+    k = np.arange(64)
+    fading = np.zeros(64, dtype=complex)
+    phase = 0.
+    for seq in range(count):
+        elapsed = seq / rate
+        # Correlated random multipath across bins and time.
+        taps = rng.normal(size=8) + 1j * rng.normal(size=8)
+        innovation = np.fft.fft(taps, n=64) / np.sqrt(8)
+        rho = np.exp(-1 / (rate * 0.25))
+        fading = rho * fading + np.sqrt(1 - rho * rho) * innovation
+        phase += rng.normal(0, 0.3 / np.sqrt(rate))
+        motion = np.sin(2 * np.pi * (0.8 * elapsed + 0.1 * elapsed ** 2) + k / 8)
+        h = (30 + 8 * motion) * np.exp(1j * (k / 12 + phase)) + 12 * fading
+        h *= np.exp(rng.normal(0, 0.12))  # common gain variation
+        h += noise * (rng.normal(size=64) + 1j * rng.normal(size=64))
+        if rng.random() < impulse_prob:
+            mask = rng.random(64) < 0.2
+            h[mask] += 50 * (rng.normal(size=mask.sum()) + 1j * rng.normal(size=mask.sum()))
+        yield h
+
+
+def simulate(host, port, rate, seconds, noise=8., impulse_prob=0.03, seed=None):
     if rate <= 0 or seconds <= 0:
         raise ValueError('positive rate and duration required')
-    rng = np.random.default_rng(7)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         start = time.monotonic()
-        for seq in range(int(rate * seconds)):
-            elapsed = seq / rate
-            k = np.arange(64)
-            amp = 35 + 10 * np.sin(2 * np.pi * 2 * elapsed + k / 8)
-            h = amp * np.exp(1j * (k / 12 + elapsed))
-            h += rng.normal(0, 1, 64) + 1j * rng.normal(0, 1, 64)
+        frames = synthetic_frames(int(rate * seconds), rate, noise, impulse_prob, seed)
+        for seq, h in enumerate(frames):
+            elapsed = time.monotonic() - start
             iq = np.column_stack((h.imag, h.real)).clip(-128, 127).astype(np.int8).tobytes()
             data = HEADER.pack(b'CSI1', 1, 0, 1, seq, int(elapsed * 1e6),
                                b'\x02\x00\x00\x00\x00\x01', -45, 6, len(iq)) + iq
@@ -151,6 +173,7 @@ def receive(args):
            ylabel='Chỉ số mẫu CSI thô (chưa ánh xạ subcarrier vật lý)')
     fig.colorbar(image, ax=ax, label='Biên độ chuẩn hóa (dB tương đối)')
     started = time.monotonic()
+    print(f'Listening on {args.host}:{args.port}', flush=True)
 
     def update(_):
         nonlocal link, last_seq, last_stamp, processor
@@ -230,9 +253,15 @@ def main():
     sim.add_argument('--port', type=int, default=5500)
     sim.add_argument('--rate', type=float, default=100)
     sim.add_argument('--seconds', type=float, default=10)
+    sim.add_argument('--noise', type=float, default=8., help='Gaussian std per I/Q component')
+    sim.add_argument('--impulse-prob', type=float, default=0.03, help='impulse probability per frame')
+    sim.add_argument('--seed', type=int, help='set for reproducibility; default random each run')
     args = parser.parse_args()
     if args.mode == 'simulate':
-        simulate(args.host, args.port, args.rate, args.seconds)
+        if args.noise < 0 or not 0 <= args.impulse_prob <= 1:
+            parser.error('noise >= 0 and impulse-prob in [0, 1] required')
+        simulate(args.host, args.port, args.rate, args.seconds,
+                 args.noise, args.impulse_prob, args.seed)
     else:
         if args.fps <= 0 or args.history < 2 or args.seconds < 0:
             parser.error('fps > 0, history >= 2, seconds >= 0 required')

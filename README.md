@@ -103,3 +103,14 @@ Heatmap thời gian–CSI index khác spectrogram. Khoảng subcarrier legacy 20
 - [SciPy STFT](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.stft.html): window, overlap, scaling.
 - *Widar3.0: Zero-Effort Cross-Domain Gesture Recognition With Wi-Fi* (MobiSys 2019): Doppler và tổng quát hóa giữa miền; không chứng minh định vị cứu hộ bằng một C5.
 - *Through-Wall Human Pose Estimation Using Radio Signals* (RF-Pose, CVPR 2018): RF pose dùng phần cứng RF chuyên dụng, không chuyển trực tiếp sang CSI ESP32.
+
+### Giả lập nhiễu ngẫu nhiên mạnh hơn (Windows)
+
+Cập nhật bằng `git pull` trên nhánh `feature/csi-udp-starter`, giữ receiver đang chạy, mở CMD thứ hai:
+
+```cmd
+cd /d D:\sar_uav_wifi_2026_fpt
+.sar\Scripts\python.exe pc\csi.py simulate --rate 100 --seconds 60 --noise 15 --impulse-prob 0.1
+```
+
+`--noise` là độ lệch chuẩn trên mỗi thành phần I/Q (mặc định 8), `--impulse-prob` là xác suất một frame có nhiễu xung (mặc định 0.03). Có fading tương quan giữa các bin/theo thời gian, biến thiên gain và chuyển động với tần số thay đổi. Mỗi lần chạy ngẫu nhiên khác nhau; thêm `--seed 42` để lặp lại các mẫu IQ (timestamp thực vẫn thay đổi). Đây là tín hiệu tổng hợp để thử giao diện/DSP, không phải mô hình người hoặc kênh RF đã hiệu chuẩn. Giá trị cao có thể bão hòa int8; receiver có EMA nên hình sẽ mượt hơn dữ liệu thô. Restart receiver giữa các lần simulator để tạo phiên sequence/timestamp mới.
